@@ -1,7 +1,19 @@
 import socket
+import errno
+import os
+import signal
 
 SERVER_ADDRESS = (HOST, PORT) = '', 8000
 REQUEST_QUEUE_SIZE = 5;
+
+def remove_zombies(signum, frame):
+    while True:
+        try:
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except OSError:
+            return
+        if pid == 0:
+            return
 
 def handle_request(client_connection):
     request = client_connection.recv(1024)
@@ -21,9 +33,23 @@ def serve_forever():
     print('Serving HTTP on port {port} ...'.format(port=PORT))
 
     while True:
-        client_connection, client_address = listen_socket.accept()
-        handle_request(client_connection)
-        client_connection.close()
+        try:
+            client_connection, client_address = listen_socket.accept()
+        except IOError as e:
+            code, msg = e.args
+            # restart accept if it was interrupted
+            if code == errno.EINTR:
+                continue
+            else:
+                raise
+        pid = os.fork()
+        if pid == 0:
+            listen_socket.close()
+            handle_request(client_connection)
+            client_connection.close()
+            os._exit(0)
+        else:
+            client_connection.close()
 
 if __name__ == '__main__':
     serve_forever()
